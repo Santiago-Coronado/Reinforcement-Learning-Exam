@@ -28,6 +28,9 @@ class GridWorldEnv(gym.Env):
 
     def __init__(self, size: int = 5, render_mode: Optional[str] = None):
         self.size = size
+        self.episodes = EPISODES
+        self.seed = SEED
+        self.batch = BATCH
         self.render_mode = render_mode
         self._agent_location = np.array([-1, -1], dtype=np.int32)
         self._current_case = np.random.choice([0, 1, 2, 3])  # Randomly select one of the four cases
