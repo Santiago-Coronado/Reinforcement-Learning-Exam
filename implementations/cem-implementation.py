@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 
 class Agent(env): 
     def __init__(self, env, samples= 10, elite = 7, alpha = 0.1):
+        super().__init__(size=5)
+
         self.env = env
         self.samples = samples
         self.elite = elite
@@ -48,21 +50,20 @@ class Agent(env):
         new_std (float): Updated standard deviation of the distribution.
         new_samples (np.array): New samples based on the updated distribution.
     """
-    def run(self, n_episodes= env.episodes):
-        for episode in range(n_episodes):
-            actions = self.sampling()
-            rewards_episode = []
-            for action in actions:
-                obs, reward, terminated, truncated, info = self.env.step(int(action))
-                rewards_episode.append(reward)
-                if terminated or truncated:
-                    break
-            elite_indices = np.argsort(rewards_episode)[-self.elite:]
-            elite_samples = actions[elite_indices]
-            self.update_distribution(elite_samples)
-            new_mean = self.mean
-            new_std = self.std
-            new_samples = self.sampling()
+    def run(self):
+        actions = self.sampling()
+        rewards = []
+        for action in actions:
+            obs, reward, terminated, truncated, info = self.env.step(int(action))
+            rewards.append(reward)
+            if terminated or truncated:
+                break
+        elite_indices = np.argsort(rewards)[-self.elite:]
+        elite_samples = actions[elite_indices]
+        self.update_distribution(elite_samples)
+        new_mean = self.mean
+        new_std = self.std
+        new_samples = self.sampling()
         return new_mean, new_std, new_samples
 
     """
@@ -83,10 +84,19 @@ class Agent(env):
         Plot of the agent's performance over episodes.
     """
     def plot(self, n_episodes= env.episodes):
-        return 0
+        fig, axs = plt.subplots(2, 1, figsize=(10, 8))
+        new_mean, new_std, new_samples = self.run(n_episodes)
+        axs[0].plot(new_samples)
+        axs[1].plot(new_mean, new_std)  
 
     """
     Makes a lot of plots and unifies them into a GIF to visualize the agent's performance over time.
     """
     def make_gif(self):
         return 0
+
+if __name__ == "__main__":
+    # ========== Testing ==========
+    env_ = env()
+    agent = Agent(size = 5, render_mode="human")
+    agent.plot(n_episodes=100)
