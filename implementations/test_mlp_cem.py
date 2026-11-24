@@ -1,22 +1,26 @@
 import torch
-from mlp_cem_implementation import MLP_CEM
+from mlp_cem_implementation import MLP_CEM, CEMOptimizer
 
-# Create model
+# Create MLP
 model = MLP_CEM()
 
-# Example: [current, power, gradient]
-observation = torch.tensor([0.5, 0.7, 0.2], dtype=torch.float32)
+# Initial parameters
+initial_params = model.get_parameters()
 
-# Model output
-output = model(observation)
+# CEM optimizer
+cem_optimizer = CEMOptimizer(initial_parameters = initial_params)
 
-print("Observation:", observation)
-print("Network output:", output)
+# Population
+population = cem_optimizer.sample_population()
 
-# Select action
-action = torch.argmax(output).item()
-print("Selected action:", action)
+# Rewards for testing
+rewards = torch.tensor([1.5, 2.0, 0.5, 3.0, 1.2, 4.0, 0.8, 2.5, 1.0, 3.5])
 
-# Check parameters
-parameters = model.get_parameters()
-print("Number of parameters:", parameters.numel())
+# Update parameters based on rewards
+elites = cem_optimizer.update(population, rewards)
+
+print("MLP parameters:", initial_params.shape)
+print("Population:", population.shape)
+print("Elites:", elites.shape)
+print("Updated mean:", cem_optimizer.mean.shape)
+print("Updated std:", cem_optimizer.std.shape)

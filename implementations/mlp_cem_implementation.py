@@ -13,7 +13,7 @@ import torch.nn as nn
 np.random.seed(42)
 torch.manual_seed(42)
 
-# mlp-cem class
+# MLP class
 class MLP_CEM(nn.Module):
     """
     Multi-Layer Perceptron (MLP) with Cross-Entropy Method (CEM) implementation.
@@ -31,7 +31,7 @@ class MLP_CEM(nn.Module):
         """
         super().__init__()
 
-        # Define the layers of the MLP
+        # Layers of the MLP
         self.model = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
@@ -75,10 +75,62 @@ class MLP_CEM(nn.Module):
         current_index = 0
         for param in self.model.parameters():
             param_length = param.numel()
-            param.data.copy_(new_params[current_index:current_index + param_length].view(param.size()))
+            param.data.copy_(new_params[current_index:current_index + param_length].copy())
             current_index += param_length
 
-# DATOS:
-# 10 muestras separados uniformemente y checar la potencia de cada una y tomar esas observaciones
-# para la entrada de MLP para predecir donde esta el máximo
-# Mostrar sobre pesos, 10 versiones de pesos, 10 redes neuronales
+# CEM optimizer class
+class CEMOptimizer:
+    """
+    A class for the CEM (Cross-Entropy Method) optimizer.
+    """
+
+    def __init__(self, initial_parameters, population_size = 10, elite_size = 2, std = 0.1):
+        """
+        Initializes the CEMOptimizer with the specified parameters.
+
+        Args:
+            initial_parameters (torch.Tensor): The initial parameters for the optimization.
+            population_size (int): The number of samples to generate in each iteration.
+            elite_size (int): The number of top-performing samples to select as elites.
+            std (float): The standard deviation for sampling new parameters.
+        """
+        self.mean = initial_parameters.clone()
+        self.population_size = population_size
+        self.elite_size = elite_size
+        self.std = torch.ones_like(initial_parameters) * std
+
+    def sample_population(self):
+        """
+        Samples a population of new parameters based on the current mean and standard deviation.
+
+        Returns:
+            torch.Tensor: A tensor containing the sampled population of new parameters.
+        """
+        population = []
+
+        for _ in range(self.population_size):
+            # Random noise
+            noise = torch.randn_like(self.mean)
+            # Sample new parameters
+            new_params = self.mean + noise * self.std
+            population.append(new_params)
+
+        return torch.stack(population)
+
+    def update(self, population, rewards):
+        """
+        Updates the mean and standard deviation of the optimizer based on the rewards of the sampled population.
+
+        Args:
+            population (torch.Tensor): The sampled population of new parameters.
+            rewards (torch.Tensor): The rewards corresponding to each sample in the population.
+        """
+        # Select elite samples based on rewards
+        elite_indices = torch.topk(rewards, self.elite_size).indices
+        elite_samples = population[elite_indices]
+
+        # Update mean and std based on elite samples
+        self.mean = elite_samples.mean(dim=0)
+        self.std = torch.std(elite_samples, dim=0) + 1e-6  # Add a small value to avoid zero std
+
+        return elite_samples
