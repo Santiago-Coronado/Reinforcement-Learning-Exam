@@ -40,26 +40,53 @@ class Agent(env):
         self.std = self.alpha * new_std + (1 - self.alpha) * self.std
 
     """
-    Plot the performance of the agent over episodes
+    Run the agent for a specified number of episodes.
     Args:
         n_episodes (int): Number of episodes to run the agent.
     Return:
-        Plot with:
+        new_mean (float): Updated mean of the distribution.
+        new_std (float): Updated standard deviation of the distribution.
+        new_samples (np.array): New samples based on the updated distribution.
+    """
+    def run(self, n_episodes= env.episodes):
+        for episode in range(n_episodes):
+            actions = self.sampling()
+            rewards_episode = []
+            for action in actions:
+                obs, reward, terminated, truncated, info = self.env.step(int(action))
+                rewards_episode.append(reward)
+                if terminated or truncated:
+                    break
+            elite_indices = np.argsort(rewards_episode)[-self.elite:]
+            elite_samples = actions[elite_indices]
+            self.update_distribution(elite_samples)
+            new_mean = self.mean
+            new_std = self.std
+            new_samples = self.sampling()
+        return new_mean, new_std, new_samples
+
+    """
+    Plot the performance of the agent over episodes
+    One plot with:
         - The power curve for the scenario currently in effect.
         - The points/samples that the algorithm is evaluating on the curve.
         - The model output (proposed current) at each time step.
         - The name of the method being executed.
+    Another plot with:
         - On the side (or in a side panel):
-            - Relevant gradient values (mean/variance).
-            - Output from the policy network.
-            - A visual indication of when the shading scenario changes.
+        - Relevant gradient values (mean/variance).
+        - Output from the policy network.
+        - A visual indication of when the shading scenario changes.
+    Args:
+        n_episodes (int): Number of episodes to run the agent.
+    Return:
+        Plot of the agent's performance over episodes.
     """
     def plot(self, n_episodes= env.episodes):
-        return 0 
+        return 0
+
     """
     Makes a lot of plots and unifies them into a GIF to visualize the agent's performance over time.
     """
     def make_gif(self):
         return 0
-
-    git commit -m "Filled some of the functions and added comments to see general behaviour of each function
