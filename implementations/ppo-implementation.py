@@ -377,7 +377,7 @@ class PPOAgent:
             action_text = "Initial" if data["action"] is None else str(data["action"])
 
             fig.suptitle(
-                f"MLP-PPO | Case {case} | Step {data['step']} | "
+                f"PPO | Case {case} | Step {data['step']} | "
                 f"Current: {current:.3f} A | Power: {power:.3f} W | "
                 f"Action: {action_text}"
             )
@@ -393,12 +393,12 @@ class PPOAgent:
         )
 
         animation.save(
-            "mlp_ppo.gif",
+            "ppo.gif",
             writer=PillowWriter(fps=5),
         )
 
         plt.close(fig)
-        print("GIF saved as mlp_ppo.gif")
+        print("GIF saved as ppo.gif")
 
 
 if __name__ == "__main__":
