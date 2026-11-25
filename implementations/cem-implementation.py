@@ -57,14 +57,38 @@ class Agent():
             0.01
         )
 
+    """
+    Extract features from an observation.
+    Args:
+        observation (np.array): The current observation.
+    Return:
+        np.array: The extracted features.
+    """
     def features(self, observation):
         return np.array([1.0, np.sign(float(observation[2]))])
 
+    """
+    Determine the action to take based on the current observation and policy parameters.
+    Args:
+        observation (np.array): The current observation.
+        parameters (np.array): The current policy parameters.
+    Return:
+        int: The action to take.
+    """
     def action(self, observation, parameters):
         weights = parameters.reshape(2, self.env.action_space.n)
         logits = self.features(observation) @ weights
         return int(np.argmax(logits))
-
+    """
+    Evaluate the performance of a policy.
+    Args:
+        parameters (np.array): The policy parameters to evaluate.
+        frames (list): List of frames to save the evaluation.
+        episode (int): The episode number.
+        seed (int): The random seed.
+    Return:
+        float: The total reward obtained.
+    """
     def evaluate(self, parameters, frames=None, episode=1, seed=None):
         observation, info = self.env.reset(seed=seed)
         rewards = []
@@ -279,6 +303,13 @@ class Agent():
 
     """
     Makes a lot of plots and unifies them into a GIF to visualize the agent's performance over time.
+    Args:
+        output_path (str, optional): Path to save the GIF. If None, saves to
+            the default location.
+        episodes (int): Number of episodes to run for the GIF.
+        duration (int): Duration of each frame in milliseconds.
+    Return:
+        str: Path to the saved GIF.
     """
     def make_gif(self, output_path=None, episodes=1, duration=100):
         if episodes < 1:
