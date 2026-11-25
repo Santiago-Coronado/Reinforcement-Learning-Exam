@@ -9,6 +9,8 @@ PPO
 # current vs power 
 # step vs gradient
 # no usar stable baselines rll libs pytorch rl, o cualquiera que implemente el algoritmo de rl como tal. matplotlib para graficar, pillow images
+
+Using https://www.datacamp.com/es/tutorial/proximal-policy-optimization as a reference to implement PPO using Pytorch.
 '''
 import numpy as np
 import torch
@@ -25,6 +27,9 @@ torch.manual_seed(42)
 
 class BackboneNetwork(nn.Module):
     def __init__(self, in_features, hidden_dimensions, out_features, dropout):
+        '''Base RNN, 3 layers with dropout and relu activation.
+        Architecture logic: layer 1 has I, P and case. layer 2 64 x 64 dimensions. Appears to work good, might change. 
+        layer 3 has output size of 3, for the 3 actions.'''
         super().__init__()
         self.layer1 = nn.Linear(in_features, hidden_dimensions)
         self.layer2 = nn.Linear(hidden_dimensions, hidden_dimensions)
@@ -32,6 +37,7 @@ class BackboneNetwork(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
+        '''Datacamp says to evaluate with RELU to avoic vanishing gradients and be efficient.'''
         x = self.layer1(x)
         x = f.relu(x)
         x = self.dropout(x)
@@ -43,32 +49,34 @@ class BackboneNetwork(nn.Module):
 
 
 class ActorCritic(nn.Module):
+    '''2 independent RNN'''
     def __init__(self, actor, critic):
         super().__init__()
         self.actor = actor
         self.critic = critic
 
     def forward(self, state):
-        action_pred = self.actor(state)
-        value_pred = self.critic(state)
+        action_pred = self.actor(state) # learns policy
+        value_pred = self.critic(state) # learns value function
         return action_pred, value_pred
 
 
 class PPOAgent:
     def __init__(self, input_size=3, hidden_size=64, output_size=3, dropout=0.1, lr=3e-4, gamma=0.99, gae_lambda=0.95, epsilon=0.2, entropy_coef=0.01, device="cpu"):
-        self.device = torch.device(device)
-        self.gamma = gamma
-        self.gae_lambda = gae_lambda
-        self.epsilon = epsilon
-        self.entropy_coef = entropy_coef
+        self.device = torch.device(device) # device agnotic code como con Octavio
+        self.gamma = gamma # for the discount factor
+        self.gae_lambda = gae_lambda # for the GAE parameter, datacamp says to use generalized advantage estimation to reduce variance and improve learning stability
+        self.epsilon = epsilon # clip range to be set to 0.2
+        self.entropy_coef = entropy_coef # for the entropy bonus to encourage exploration
 
-        actor = BackboneNetwork(input_size, hidden_size, output_size, dropout)
-        critic = BackboneNetwork(input_size, hidden_size, 1, dropout)
+        actor = BackboneNetwork(input_size, hidden_size, output_size, dropout) # 3 action
+        critic = BackboneNetwork(input_size, hidden_size, 1, dropout) # state value
         self.model = ActorCritic(actor, critic).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
     def select_action(self, observation, deterministic=False):
-        self.model.eval()
+        '''This policy'''
+        self.model.eval() # deactivate dropout
         obs_tensor = torch.tensor(observation, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             action_pred, value_pred = self.model(obs_tensor)
@@ -79,13 +87,14 @@ class PPOAgent:
         return action.item(), log_prob.item(), value_pred.item()
 
     def calculate_returns(self, rewards, values, next_values, dones, terminated):
+        '''Calculate returns using GAE.'''
         advantages = []
         gae = 0.0
         for r, v, nv, d, term in zip(reversed(rewards), reversed(values), reversed(next_values), reversed(dones), reversed(terminated)):
-            bootstrap = 0.0 if term else 1.0
+            bootstrap = 0.0 if term else 1.0 
             cont = 0.0 if d else 1.0
-            delta = r + self.gamma * nv * bootstrap - v
-            gae = delta + self.gamma * self.gae_lambda * cont * gae
+            delta = r + self.gamma * nv * bootstrap - v # error
+            gae = delta + self.gamma * self.gae_lambda * cont * gae 
             advantages.insert(0, gae)
         advantages = torch.tensor(advantages, dtype=torch.float32, device=self.device)
         returns = advantages + torch.tensor(values, dtype=torch.float32, device=self.device)
@@ -93,16 +102,19 @@ class PPOAgent:
         return returns
 
     def calculate_advantages(self, returns, values):
+        '''Calculate advantages from returns and values.'''
         advantages = returns - values
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages
 
     def calculate_surrogate_loss(self, actions_log_probability_old, actions_log_probability_new, advantages):
+        '''Calculate the surrogate loss for PPO. Calculat the ratio of new and old policy probabilities, then clip the ratio to be within [1-epsilon, 1+epsilon].'''
         advantages = advantages.detach()
         policy_ratio = (actions_log_probability_new - actions_log_probability_old).exp()
         surrogate_loss_1 = policy_ratio * advantages
-        surrogate_loss_2 = torch.clamp(policy_ratio, min=1.0 - self.epsilon, max=1.0 + self.epsilon) * advantages
+        surrogate_loss_2 = torch.clamp(policy_ratio, min=1.0 - self.epsilon, max=1.0 + self.epsilon) * advantages # To clip and make sure grads = 0 when necessary
         return torch.min(surrogate_loss_1, surrogate_loss_2)
+        '''Calculate the final losses for the policy and value networks.'''
 
     def calculate_losses(self, surrogate_loss, entropy, returns, value_pred):
         entropy_bonus = self.entropy_coef * entropy
@@ -111,6 +123,7 @@ class PPOAgent:
         return policy_loss, value_loss
 
     def forward_pass(self, env, steps_per_update, state, info):
+        '''Collect experiences from the environment for a given number of steps.'''
         states, actions, actions_log_probability, values, rewards, next_values, dones, terminated_list = [], [], [], [], [], [], [], []
         completed_rewards = []
         episode_reward = 0.0
@@ -155,6 +168,7 @@ class PPOAgent:
         return completed_rewards, states_t, actions_t, old_log_probs_t, advantages, returns, state, info
 
     def update_policy(self, states, actions, actions_log_probability_old, advantages, returns, ppo_steps=4, batch_size=128):
+        '''Update the policy and value networks using the collected experiences. Old policy vs new policy diff'''
         dataset = TensorDataset(states, actions, actions_log_probability_old.detach(), advantages, returns)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -184,7 +198,7 @@ class PPOAgent:
 
         return total_policy_loss / ppo_steps, total_value_loss / ppo_steps
 
-    def train(self, env, updates=100, steps_per_update=512, ppo_steps=4, batch_size=128):
+    def train(self, env, updates=100, steps_per_update=512, ppo_steps=4, batch_size=128): # One of my stop conditions: I have 4 cases, 512 steps will give me 4 minibatches exactly to ensure I can see different cases and combinations (512/128)
         best_reward = -np.inf
         best_weights = None
         all_rewards = []
@@ -226,7 +240,7 @@ class PPOAgent:
             )
 
         if best_weights is not None:
-            self.model.load_state_dict(best_weights)
+            self.model.load_state_dict(best_weights) # Only keep best weights to ensure 100 iterations are representative to each case. Each case has differen I and P values that differ a lot from each other.
 
         return history
 
