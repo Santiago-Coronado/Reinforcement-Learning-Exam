@@ -4,6 +4,7 @@ Cross-Entropy Method (CEM) implementation.
 from pathlib import Path
 import sys
 
+# Add the parent folder to the system path to allow imports from the implementations folder
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
@@ -96,10 +97,9 @@ class Agent():
         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
         # Agent, samples and line of case data
-        case_path = Path(__file__).resolve().parents[1] / "src" / f"Caso{self._current_case + 1}.csv"
-        curve = np.genfromtxt(case_path, delimiter=",", names=True, encoding="utf-8")
-        x = curve["corriente"]
-        y = curve["potencia"]
+        curve = self.env.cases[self.env._current_case]
+        x = curve[:, 0]
+        y = curve[:, 1]
         order = np.argsort(x)
         x = x[order]
         y = y[order]
