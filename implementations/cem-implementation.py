@@ -21,138 +21,134 @@ class Agent():
         self.samples = samples
         self.elite = elite
         self.alpha = alpha
-        self.mean = 0.0
-        self.std = 1.0
-        self._distributions = {}
-        self._distribution_case = None
+        self.parameter_count = 2 * env.action_space.n
+        self.mean = np.zeros(self.parameter_count)
+        self.std = np.ones(self.parameter_count)
 
     """
-    Sample candidate currents from the current policy.
+    Sample candidate policy parameter vectors.
     Args:
         None
     Return:
-        currents (np.array): New samples based on the current distribution.
+        parameters (np.array): Samples from the current parameter distribution.
     """
     def sampling(self, count=None):
         if count is None:
             count = self.samples
-        return np.random.normal(self.mean, self.std, count)
+        return np.random.normal(
+            self.mean,
+            self.std,
+            size=(count, self.parameter_count)
+        )
 
     """
-    Update the current distribution based on elite high-power currents.
+    Update the parameter distribution using elite policies.
     Args:
-        elite_samples (np.array): Candidate currents with the highest power.
+        elite_parameters (np.array): Parameters of the highest-return policies.
     Return:
         None
     """
-    def update_distribution(self, elite_samples):
-        curve = self.env.cases[self.env._current_case]
-        lower, upper = curve[0, 0], curve[-1, 0]
-        new_mean = np.mean(elite_samples)
-        min_std = max((upper - lower) * 0.01, np.finfo(float).eps)
-        new_std = max(np.std(elite_samples), min_std)
+    def update_distribution(self, elite_parameters):
+        new_mean = np.mean(elite_parameters, axis=0)
+        new_std = np.std(elite_parameters, axis=0)
         self.mean = self.alpha * new_mean + (1 - self.alpha) * self.mean
-        self.mean = float(np.clip(self.mean, lower, upper))
-        self.std = float(np.clip(
+        self.std = np.maximum(
             self.alpha * new_std + (1 - self.alpha) * self.std,
-            min_std,
-            upper - lower
-        ))
-        self._distributions[self.env._current_case] = (self.mean, self.std)
+            0.01
+        )
 
-    def _load_case_distribution(self):
-        case = self.env._current_case
-        curve = self.env.cases[case]
-        lower, upper = curve[0, 0], curve[-1, 0]
-        if case in self._distributions:
-            self.mean, self.std = self._distributions[case]
-        else:
-            self.mean = float((lower + upper) / 2)
-            self.std = float((upper - lower) / 2)
-            self._distributions[case] = (self.mean, self.std)
-        self._distribution_case = case
+    def features(self, observation):
+        return np.array([1.0, np.sign(float(observation[2]))])
 
-    """
-    Run the agent for a specified number of episodes.
-    Args:
-        frames (list, optional): Frames to append for visualization.
-        episode (int): Episode number used in visualization captions.
-    Return:
-        float: Total reward collected during the episode.
-    """
-    def run(self, frames=None, episode=1):
-        obs, info = self.env.reset()
+    def action(self, observation, parameters):
+        weights = parameters.reshape(2, self.env.action_space.n)
+        logits = self.features(observation) @ weights
+        return int(np.argmax(logits))
+
+    def evaluate(self, parameters, frames=None, episode=1, seed=None):
+        observation, info = self.env.reset(seed=seed)
         rewards = []
         step = 0
-        self._load_case_distribution()
 
         terminated = False
         truncated = False
         while not (terminated or truncated):
-            if self.env._current_case != self._distribution_case:
-                self._load_case_distribution()
-
-            curve = self.env.cases[self.env._current_case]
-            lower, upper = curve[0, 0], curve[-1, 0]
-            candidate_currents = np.clip(self.sampling(), lower, upper)
-            candidate_powers = np.interp(candidate_currents, curve[:, 0], curve[:, 1])
-            elite_count = min(self.elite, len(candidate_currents))
-            elite_indices = np.argsort(candidate_powers)[-elite_count:]
-            elite_currents = candidate_currents[elite_indices]
-            self.update_distribution(elite_currents)
-
             if frames is not None:
-                frames.append(self.plot(
-                    step=step,
-                    episode=episode,
-                    show=False,
-                    sample_currents=candidate_currents
-                ))
+                frames.append(self.plot(step=step, episode=episode, show=False))
 
-            current = self.env._current_current
-            increment = self.env.current_increment
-            if self.mean > current + increment / 2:
-                env_action = 2
-            elif self.mean < current - increment / 2:
-                env_action = 0
-            else:
-                env_action = 1
-
-            obs, reward, terminated, truncated, info = self.env.step(env_action)
+            action = self.action(observation, parameters)
+            observation, reward, terminated, truncated, info = self.env.step(action)
             rewards.append(reward)
             step += 1
 
         if frames is not None:
-            frames.append(self.plot(
-                sample_currents=np.array([]),
-                step=step,
-                episode=episode,
-                show=False
-            ))
+            frames.append(self.plot(step=step, episode=episode, show=False))
 
         return float(np.sum(rewards))
+
+    """
+    Train the CEM algorithm.
+    Args:
+        iterations (int): Number of iterations to run.
+        episodes_per_policy (int): Number of episodes to run per policy.
+    Return:
+        list: List of the best return achieved in each iteration.
+    """
+    def train(self, iterations=50, episodes_per_policy=1):
+        if iterations < 1:
+            raise ValueError("iterations must be at least 1")
+        if episodes_per_policy < 1:
+            raise ValueError("episodes_per_policy must be at least 1")
+
+        history = []
+        for iteration in range(iterations):
+            candidates = self.sampling()
+            seeds = [
+                iteration * episodes_per_policy + episode
+                for episode in range(episodes_per_policy)
+            ]
+            returns = np.array([
+                np.mean([
+                    self.evaluate(parameters, seed=seed)
+                    for seed in seeds
+                ])
+                for parameters in candidates
+            ])
+            elite_count = min(self.elite, len(candidates))
+            elite_indices = np.argsort(returns)[-elite_count:]
+            self.update_distribution(candidates[elite_indices])
+            history.append(float(np.max(returns)))
+        return history
+
+    """
+    Run the current mean policy for one episode.
+    Args:
+        frames (list, optional): Frames to append for visualization.
+        episode (int): Episode number used in visualization captions.
+    Return:
+        float: Total return achieved in the episode.
+    """
+    def run(self, frames=None, episode=1):
+        return self.evaluate(self.mean, frames=frames, episode=episode)
 
     """
     Plot of subplots showing the performance of the agent over one episode
     One plot with:
         - The power curve for the scenario currently in effect.
-        - The points/samples that the algorithm is evaluating on the curve.
-        - The model output (proposed current) at each time step.
-        - The name of the method being executed.
+        - The environment's current operating point.
     Another plot with:
-        - On the side (or in a side panel):
-        - Relevant gradient values (mean/variance).
-        - Output from the policy network.
-        - A visual indication of when the shading scenario changes.
+        - The action scores produced by the mean policy.
     Args:
-        None
+        step (int, optional): Step number used in visualization captions.
+        episode (int, optional): Episode number used in visualization captions.
+        show (bool): Whether to display the plot.
     Return:
         Plot of the agent's performance over one episode.
     """
-    def plot(self, step=None, episode=None, show=True, sample_currents=None):
+    def plot(self, step=None, episode=None, show=True):
         fig, axs = plt.subplots(2, 1, figsize=(8, 6))
 
-        # Plot the active CVP curve and the environment current operating point.
+        # Plot the power curve and the environment's current operating point
         curve = self.env.cases[self.env._current_case]
         x = curve[:, 0]
         y = curve[:, 1]
@@ -163,38 +159,23 @@ class Agent():
         current = self.env._current_current
         power = self.env._current_power
         axs[0].scatter(current, power, s=100, color='green', marker='s', label='Environment state')
-        if sample_currents is None:
-            sample_currents = np.clip(self.sampling(), x.min(), x.max())
-        sample_currents = np.asarray(sample_currents)
-        if sample_currents.size:
-            sample_currents = np.clip(sample_currents, x.min(), x.max())
-            sample_powers = np.interp(sample_currents, x, y)
-            axs[0].scatter(
-                sample_currents,
-                sample_powers,
-                color='red',
-                alpha=0.7,
-                label='Nearby samples',
-                zorder=3
-            )
         axs[0].set_title(f'Power Curve (case {self.env._current_case})')
         axs[0].set_xlabel('Current')
         axs[0].set_ylabel('Power')
         axs[0].legend()
 
-        current_distribution = [
-            self.mean - self.std,
-            self.mean,
-            self.mean + self.std
-        ]
+        # Plot the action scores produced by the mean policy
+        weights = self.mean.reshape(2, self.env.action_space.n)
+        gradient_sign = np.sign(self.env._current_gradient)
+        action_logits = np.array([1.0, gradient_sign]) @ weights
         axs[1].bar(
-            ['mean - std', 'mean', 'mean + std'],
-            current_distribution,
+            ['decrease', 'maintain', 'increase'],
+            action_logits,
             color='green',
             alpha=0.6
         )
-        axs[1].set_title('CEM Action Distribution')
-        axs[1].set_ylabel('Sampled action')
+        axs[1].set_title('Mean Policy Action Scores')
+        axs[1].set_ylabel('Action score')
 
         plt.tight_layout()
         buffer = BytesIO()
@@ -249,5 +230,6 @@ class Agent():
 if __name__ == "__main__":
     env = CVP_env()
     agent = Agent(env)
+    agent.train()
     gif_path = agent.make_gif()
     print(f"Saved animation to {gif_path}")
