@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 
 
 class Agent(): 
-    def __init__(self, env, samples= 10, elite = 7, alpha = 0.1):
+    def __init__(self, env, samples=10, elite=3, alpha=0.9):
         super().__init__()
         self.env = env
         self.samples = samples
@@ -23,65 +23,102 @@ class Agent():
         self.alpha = alpha
         self.mean = 0.0
         self.std = 1.0
+        self._distributions = {}
+        self._distribution_case = None
 
     """
-    Sample actions from the current policy.
+    Sample candidate currents from the current policy.
     Args:
         None
     Return:
-        actions (np.array): New samples based on the current distribution.
+        currents (np.array): New samples based on the current distribution.
     """
     def sampling(self, count=None):
         if count is None:
             count = self.samples
-        actions = np.random.normal(self.mean, self.std, count)
-        return actions
+        return np.random.normal(self.mean, self.std, count)
 
     """
-    Update the policy distribution based on the elite samples.
+    Update the current distribution based on elite high-power currents.
     Args:
-        elite_samples (np.array): The elite samples used to update the current and power of agent("position" in the graphic).
+        elite_samples (np.array): Candidate currents with the highest power.
     Return:
         None
     """
     def update_distribution(self, elite_samples):
+        curve = self.env.cases[self.env._current_case]
+        lower, upper = curve[0, 0], curve[-1, 0]
         new_mean = np.mean(elite_samples)
-        new_std = np.std(elite_samples)
+        min_std = max((upper - lower) * 0.01, np.finfo(float).eps)
+        new_std = max(np.std(elite_samples), min_std)
         self.mean = self.alpha * new_mean + (1 - self.alpha) * self.mean
-        self.std = self.alpha * new_std + (1 - self.alpha) * self.std
+        self.mean = float(np.clip(self.mean, lower, upper))
+        self.std = float(np.clip(
+            self.alpha * new_std + (1 - self.alpha) * self.std,
+            min_std,
+            upper - lower
+        ))
+        self._distributions[self.env._current_case] = (self.mean, self.std)
+
+    def _load_case_distribution(self):
+        case = self.env._current_case
+        curve = self.env.cases[case]
+        lower, upper = curve[0, 0], curve[-1, 0]
+        if case in self._distributions:
+            self.mean, self.std = self._distributions[case]
+        else:
+            self.mean = float((lower + upper) / 2)
+            self.std = float((upper - lower) / 2)
+            self._distributions[case] = (self.mean, self.std)
+        self._distribution_case = case
 
     """
     Run the agent for a specified number of episodes.
     Args:
-        n_episodes (int): Number of episodes to run the agent.
+        frames (list, optional): Frames to append for visualization.
+        episode (int): Episode number used in visualization captions.
     Return:
-        new_mean (float): Updated mean of the distribution.
-        new_std (float): Updated standard deviation of the distribution.
-        new_samples (np.array): New samples based on the updated distribution.
+        float: Total reward collected during the episode.
     """
     def run(self, frames=None, episode=1):
         obs, info = self.env.reset()
-        sampled_action_values = []
         rewards = []
         step = 0
+        self._load_case_distribution()
 
         terminated = False
         truncated = False
         while not (terminated or truncated):
-            candidate_actions = self.sampling()
-            sampled_action = float(candidate_actions[0])
+            if self.env._current_case != self._distribution_case:
+                self._load_case_distribution()
+
+            curve = self.env.cases[self.env._current_case]
+            lower, upper = curve[0, 0], curve[-1, 0]
+            candidate_currents = np.clip(self.sampling(), lower, upper)
+            candidate_powers = np.interp(candidate_currents, curve[:, 0], curve[:, 1])
+            elite_count = min(self.elite, len(candidate_currents))
+            elite_indices = np.argsort(candidate_powers)[-elite_count:]
+            elite_currents = candidate_currents[elite_indices]
+            self.update_distribution(elite_currents)
+
             if frames is not None:
                 frames.append(self.plot(
                     step=step,
                     episode=episode,
-                    show=False
+                    show=False,
+                    sample_currents=candidate_currents
                 ))
 
-            env_action = int(np.clip(
-                np.rint(sampled_action), 0, self.env.action_space.n - 1
-            ))
+            current = self.env._current_current
+            increment = self.env.current_increment
+            if self.mean > current + increment / 2:
+                env_action = 2
+            elif self.mean < current - increment / 2:
+                env_action = 0
+            else:
+                env_action = 1
+
             obs, reward, terminated, truncated, info = self.env.step(env_action)
-            sampled_action_values.append(sampled_action)
             rewards.append(reward)
             step += 1
 
@@ -93,10 +130,6 @@ class Agent():
                 show=False
             ))
 
-        elite_count = min(self.elite, len(rewards))
-        elite_indices = np.argsort(rewards)[-elite_count:]
-        elite_samples = np.asarray(sampled_action_values)[elite_indices]
-        self.update_distribution(elite_samples)
         return float(np.sum(rewards))
 
     """
@@ -130,13 +163,8 @@ class Agent():
         current = self.env._current_current
         power = self.env._current_power
         axs[0].scatter(current, power, s=100, color='green', marker='s', label='Environment state')
-        sample_radius = 10 * self.env.current_increment
-        sample_min = max(x.min(), current - sample_radius)
-        sample_max = min(x.max(), current + sample_radius)
         if sample_currents is None:
-            sample_currents = np.random.uniform(
-                sample_min, sample_max, size=self.samples
-            )
+            sample_currents = np.clip(self.sampling(), x.min(), x.max())
         sample_currents = np.asarray(sample_currents)
         if sample_currents.size:
             sample_currents = np.clip(sample_currents, x.min(), x.max())
@@ -154,10 +182,14 @@ class Agent():
         axs[0].set_ylabel('Power')
         axs[0].legend()
 
-        action_distribution = [self.mean - self.std, self.mean, self.mean + self.std]
+        current_distribution = [
+            self.mean - self.std,
+            self.mean,
+            self.mean + self.std
+        ]
         axs[1].bar(
             ['mean - std', 'mean', 'mean + std'],
-            action_distribution,
+            current_distribution,
             color='green',
             alpha=0.6
         )
