@@ -135,15 +135,19 @@ class CVP_env(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 4}
 
     # Build the environment
-    def __init__(self, render_mode: Optional[str] = None, max_steps: int = 200):
+    def __init__(self, render_mode: Optional[str] = None, max_steps: int = 300):
         self.episodes = EPISODES
         self.seed = SEED
         self.batch = BATCH
         self.render_mode = render_mode
         self.max_steps = max_steps
 
-        # Each step, the current is incremented by 0.1
-        self.current_increment = 0.1
+        # Each step, the current is incremented by 0.1 (changed to 0.5 for faster convergence)
+        self.current_increment = 0.5
+
+        # Scale factors for current and power to normalize the values for the agent
+        self.current_scale = 40.0
+        self.power_scale = 1000.0
 
         # Load the cases from the numpy files
         data_path = Path(__file__).resolve().parent.parent / "src"
@@ -193,8 +197,8 @@ class CVP_env(gym.Env):
         # Get the active case curve
         curve = self.cases[self._current_case]
 
-        # Delta for gradient calculation (initially set to 0.001, can be adjusted)
-        delta = 0.001
+        # Delta for gradient calculation (initially set to 0.001, can be adjusted) -> (changed to 0.1 for faster convergence)
+        delta = 0.1
 
         # Limit the range of the gradient calculation
         left = max(curve[0, 0], self._current_current - delta)
@@ -212,9 +216,9 @@ class CVP_env(gym.Env):
     # Get the observation
     def _get_obs(self):
         return np.array([
-            self._current_current,
-            self._current_power,
-            self._current_gradient
+            self._current_current / self.current_scale,
+            self._current_power / self.power_scale,
+            self._current_gradient * self.current_scale / self.power_scale # Gradient = (dP/dI) * (I_scale/P_scale)
         ], dtype=np.float32)
 
     # Get aditional information about the environment
@@ -268,9 +272,9 @@ class CVP_env(gym.Env):
         self._current_power = self._get_power(self._current_current)
         self._current_gradient = self._get_gradient()
 
-        # Obtain reward
+        # Obtain reward by dividing the power by the power scale
         # We don't use the maximum of the curve to calculate the reward nor to stop the episode
-        reward = self._current_power
+        reward = self._current_power / self.power_scale
 
         # Save the evaluated state before changing the case
         # When the curve is changed, the power is recalculated with the new condition
@@ -284,7 +288,7 @@ class CVP_env(gym.Env):
         self._step_count += 1
         self._steps_since_change += 1
 
-        # Change the shading case each BATCH
+        # Change the shading case after BATCH steps
         case_changed = False
 
         if self._steps_since_change >= self.batch:
@@ -329,7 +333,8 @@ class CVP_env(gym.Env):
         return self._get_obs(), reward, terminated, truncated, info
 
     # Render the environment (For now, only simple vision,
-    # we should implement more implementations like Matplotlib to visualize the environment and to generate GIF)
+    # we have to implement Matplotlib to visualize the environment and to generate GIF)
+    # Implemented in each implementation
     def render(self):
         if self.render_mode == "human":
             print(f"Active case: {self._current_case}")

@@ -9,6 +9,8 @@ CEM = cross-entropy method, a stochastic optimization technique used for trainin
 import numpy as np
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
 
 np.random.seed(42)
 torch.manual_seed(42)
@@ -108,8 +110,11 @@ class agent:
             elite_samples = population[elite_indices]
         
             # Update mean and std based on elite samples
-            self.mean = elite_samples.mean(dim=0)
-            self.std = torch.std(elite_samples, dim=0) + 1e-6  # Add a small value to avoid zero std
+            new_mean = elite_samples.mean(dim=0)
+            new_std = elite_samples.std(dim=0, unbiased=False)
+
+            self.mean = new_mean
+            self.std = torch.clamp(new_std, min = 0.001, max = 0.1)
         
             return elite_samples
 
@@ -178,22 +183,12 @@ class agent:
 
     # Select action based on the observation
     def select_action(self, observation):
-        """
-        Selects an action based on the current observation.
-
-        Args:
-            observation: The current observation from the environment.
-
-        Returns:
-            int: The selected action.
-        """
-        # Convert observation to tensor and dimention 0 for batch
         obs_tensor = torch.tensor(observation, dtype = torch.float32).unsqueeze(0)
 
-        # Use the MLP model to get the action logits and select the action with the highest logit
         with torch.no_grad():
             logits = self.model(obs_tensor)
-            action = torch.argmax(logits, dim = 1)
+            probabilities = torch.softmax(logits, dim=1)
+            action = torch.multinomial(probabilities, num_samples = 1)
 
         return action.item()
 
@@ -277,7 +272,8 @@ class agent:
                 "generation": generation + 1,
                 "average_reward": average_reward,
                 "best_reward": generation_best_reward,
-                "global_best": best_reward
+                "global_best": best_reward,
+                "std_mean": self.cem_optimizer.std.mean().item()
             })
 
             print(
@@ -291,12 +287,212 @@ class agent:
 
         return history
 
+    def evaluate_best_agent(model_agent, env, seed=123):
+        """
+        Evaluates the best agent in the given environment.
+
+        Args:
+            model_agent: The trained agent to evaluate.
+            env: The environment to evaluate the agent.
+            seed (int): The random seed for reproducibility.
+
+        Returns:
+            list: A list of dictionaries containing the episode history.
+        """
+        observation, info = env.reset(seed=seed)
+        episode_history = []
+
+        # Register the initial state
+        episode_history.append({
+            "step": 0,
+            "case": info["current_case"],
+            "current": info["current"],
+            "power": info["power"],
+            "reward": 0.0,
+            "action": None,
+            "case_changed": False
+        })
+        terminated = False
+        truncated = False
+        step = 0
+
+        while not terminated and not truncated:
+            action = model_agent.select_action(observation)
+            observation, reward, terminated, truncated, info = env.step(action)
+            step += 1
+
+            # Save the state that was evaluated
+            episode_history.append({
+                "step": step,
+                "case": info["evaluated_case"],
+                "current": info["evaluated_current"],
+                "power": info["evaluated_power"],
+                "reward": reward,
+                "action": action,
+                "case_changed": info["case_changed"]
+            })
+
+        print(f"Evaluation completed. Total steps: {step}")
+        print(f"Total reward: {sum(x['reward'] for x in episode_history):.4f}")
+
+        # Analyze action distribution
+        actions = [x["action"] for x in episode_history if x["action"] is not None]
+        unique_actions, counts = np.unique(actions, return_counts=True)
+
+        print("\nAction distribution:")
+
+        for action, count in zip(unique_actions, counts):
+            print(f"Action {action}: {count} times ({count / len(actions) * 100:.2f}%)")
+        
+        return episode_history
+
+    def create_gif(episode_history, env):
+        """
+        Creates a GIF of the evaluation process.
+
+        Args:
+            episode_history: The history of the evaluation.
+            env: The environment used for the evaluation.
+        """
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        ax_curve = axes[0]
+        ax_progress = axes[1]
+        reward_axis = ax_progress.twinx()
+
+        all_currents = np.concatenate([curve[:, 0] for curve in env.cases])
+        all_powers = np.concatenate([curve[:, 1] for curve in env.cases])
+
+        x_min, x_max = all_currents.min(), all_currents.max()
+        y_min, y_max = all_powers.min(), all_powers.max()
+
+        def update(frame):
+            data = episode_history[frame]
+            case = data["case"]
+            current = data["current"]
+            power = data["power"]
+
+            ax_curve.clear()
+            ax_progress.clear()
+            reward_axis.clear()
+
+            # P-I curve
+            curve = env.cases[case]
+
+            ax_curve.plot(
+                curve[:, 0], curve[:, 1],
+                color = "blue",
+                label = "P-I Curve",
+                linewidth = 2
+            )
+
+            # Evaluated points
+            points = [
+                (x["current"], x["power"])
+                for x in episode_history[:frame + 1]
+                if x["case"] == case and x["step"] > 0
+            ]
+
+            # Plot evaluated points with red dots
+            if points:
+                points_array = np.array(points)
+
+                ax_curve.scatter(
+                    points_array[:, 0],
+                    points_array[:, 1],
+                    color = "red",
+                    label = "Evaluated Points",
+                    zorder = 3
+                )
+
+            # Current position with green diamond marker
+            ax_curve.scatter(
+                current, power,
+                color = "green",
+                marker = "D",
+                s = 100,
+                label = "Current Position",
+                zorder = 4
+            )
+
+            ax_curve.set_xlim(x_min, x_max)
+            ax_curve.set_ylim(y_min, y_max * 1.1)
+            ax_curve.set_title(f"Case {case} - Step {data['step']}")
+            ax_curve.set_xlabel("Current I (A)")
+            ax_curve.set_ylabel("Power P (W)")
+            ax_curve.legend()
+            ax_curve.grid(True)
+
+            # Progression plot
+            previous_data = episode_history[:frame + 1]
+
+            steps = [x["step"] for x in previous_data]
+            powers = [x["power"] for x in previous_data]
+            rewards = [x["reward"] for x in previous_data]
+
+            ax_progress.plot(
+                steps, powers,
+                label = "Power (W)"
+            )
+
+            reward_axis.plot(
+                steps, rewards,
+                color = "orange",
+                label = "Reward"
+            )
+
+            ax_progress.set_xlabel("Step")
+            ax_progress.set_ylabel("Power (W)")
+            reward_axis.set_ylabel("Reward")
+
+            ax_progress.set_title("Power and Reward Progress")
+            ax_progress.grid(True)
+
+            lines1, labels1 = ax_progress.get_legend_handles_labels()
+            lines2, labels2 = reward_axis.get_legend_handles_labels()
+
+            ax_progress.legend(
+                lines1 + lines2,
+                labels1 + labels2,
+                loc = "best"
+            )
+
+            action_text = (
+                "Initial"
+                if data["action"] is None
+                else str(data["action"])
+            )
+
+            fig.suptitle(
+                f"MLP-CEM | Case {case} | Step {data['step']} | "
+                f"Current: {current:.3f} A | Power: {power:.3f} W | "
+                f"Action: {action_text}"
+            )
+
+            plt.tight_layout()
+
+        animation = FuncAnimation(
+            fig,
+            update,
+            frames = len(episode_history),
+            interval = 300,
+            repeat = True
+        )
+
+        animation.save(
+            "mlp_cem.gif",
+            writer = PillowWriter(fps = 5)
+        )
+
+        plt.close(fig)
+        print("GIF saved as mlp_cem.gif")
+
 # Main function to train the agent on the environment
 if __name__ == "__main__":
     
     from gymnassium.gym_env import CVP_env
 
-    env = CVP_env(max_steps = 200)
+    env = CVP_env(max_steps = 300)
 
     model_agent = agent(
         input_size = 3,
@@ -307,6 +503,16 @@ if __name__ == "__main__":
         std = 0.1
     )
 
-    history = model_agent.train(env, generations = 100)
+    history = model_agent.train(env, generations = 300)
+
+    # Evaluate the trained agent
+    episode_history = agent.evaluate_best_agent(
+        model_agent,
+        env,
+        seed = 123
+    )
+
+    # Generate GIF
+    agent.create_gif(episode_history, env)
 
     env.close()
