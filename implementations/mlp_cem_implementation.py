@@ -151,7 +151,7 @@ class agent:
         current_index = 0
         for param in self.model.parameters():
             param_length = param.numel()
-            param.data.copy_(new_params[current_index:current_index + param_length].copy())
+            param.data.copy_(new_params[current_index:current_index + param_length].view_as(param))
             current_index += param_length
 
     def sample_population(self):
@@ -175,3 +175,138 @@ class agent:
             torch.Tensor: A tensor containing the elite samples selected based on rewards.
         """
         return self.cem_optimizer.update(population, rewards)
+
+    # Select action based on the observation
+    def select_action(self, observation):
+        """
+        Selects an action based on the current observation.
+
+        Args:
+            observation: The current observation from the environment.
+
+        Returns:
+            int: The selected action.
+        """
+        # Convert observation to tensor and dimention 0 for batch
+        obs_tensor = torch.tensor(observation, dtype = torch.float32).unsqueeze(0)
+
+        # Use the MLP model to get the action logits and select the action with the highest logit
+        with torch.no_grad():
+            logits = self.model(obs_tensor)
+            action = torch.argmax(logits, dim = 1)
+
+        return action.item()
+
+    def evaluate_candidate(self, env, parameters, seeds):
+        """
+        Evaluates a candidate solution by running it through the environment.
+
+        Args:
+            env: The environment to evaluate the candidate in.
+            parameters (torch.Tensor): The parameters of the candidate solution.
+            seeds (list): A list of random seeds to use for evaluation.
+
+        Returns:
+            float: The average reward obtained by evaluating the candidate.
+        """
+        # Set the parameters of the MLP model to the candidate parameters
+        self.set_parameters(parameters)
+        episode_rewards = []
+
+        # For each seed, reset the environment and run an episode to evaluate the candidate
+        for seed in seeds:
+            observation, info = env.reset(seed=seed)
+            total_reward = 0
+            terminated = False
+            truncated = False
+
+            # Run the episode until it is terminated or truncated and accumulate the total reward
+            # to calculate the average reward for the candidate
+            while not terminated and not truncated:
+                action = self.select_action(observation)
+                observation, reward, terminated, truncated, info = env.step(action)
+                total_reward += reward
+            episode_rewards.append(total_reward)
+
+        return np.mean(episode_rewards)
+
+    # Function to train the agent using the CEM optimizer
+    def train(self, env, generations = 100):
+        """
+        Trains the CEM optimizer on the given environment.
+    
+        Args:
+            env: The environment to train on.
+            generations (int): The number of generations to train.
+    
+        Returns:
+            list: A list of dictionaries containing the training history.
+        """
+        seeds = [42, 43, 44] # Test seeds for reproducibility
+        best_reward = -np.inf
+        best_parameters = None
+        history = []
+
+        # Loop through the specified number of generations to train the agent
+        for generation in range(generations):
+            population = self.sample_population()
+            population_rewards = []
+
+            # Evaluate each candidate in the population and store their rewards
+            for candidate in population:
+                reward = self.evaluate_candidate(env, candidate, seeds)
+                population_rewards.append(reward)
+
+            rewards_tensor = torch.tensor(population_rewards, dtype=torch.float32)
+
+            self.update(population, rewards_tensor)
+
+            # Find the best candidate in the current generation
+            generation_best_index = np.argmax(population_rewards)
+            generation_best_reward = population_rewards[generation_best_index]
+
+            # Update the best parameters if the current generation's best reward is better than the previous best reward
+            if generation_best_reward > best_reward:
+                best_reward = generation_best_reward
+                best_parameters = population[generation_best_index].clone()
+
+            # Calculate the average reward for the current generation and store the training history
+            average_reward = np.mean(population_rewards)
+
+            history.append({
+                "generation": generation + 1,
+                "average_reward": average_reward,
+                "best_reward": generation_best_reward,
+                "global_best": best_reward
+            })
+
+            print(
+                f"Generation {generation + 1}/{generations} | "
+                f"Average Reward: {average_reward:.4f} | "
+                f"Best Reward: {generation_best_reward:.4f} | "
+                f"Global Best: {best_reward:.4f}"
+            )
+
+        self.set_parameters(best_parameters)
+
+        return history
+
+# Main function to train the agent on the environment
+if __name__ == "__main__":
+    
+    from gymnassium.gym_env import CVP_env
+
+    env = CVP_env(max_steps = 200)
+
+    model_agent = agent(
+        input_size = 3,
+        hidden_size = 16,
+        output_size = 3,
+        population_size = 10,
+        elite_size = 2,
+        std = 0.1
+    )
+
+    history = model_agent.train(env, generations = 100)
+
+    env.close()
