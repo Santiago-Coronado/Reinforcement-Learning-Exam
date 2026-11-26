@@ -22,15 +22,45 @@ class Agent:
         self.gamma = gamma
         self.action_count = env.action_space.n
 
+    """
+    Gives bias, current, and power features from an observation.
+    Args:
+        observation: The current state of the environment.
+    Returns:
+        A numpy array containing the features.
+        1.0: bias to help with later calculations.
+        float(observation[0]): current feature.
+        float(observation[1]): power feature.
+    """
+    def features(self, observation):
+            return np.array(
+                [1.0, float(observation[0]), float(observation[1])],
+                dtype=float,
+            )
 
     def probabilities(self, observation):
         return 0
-
+    
+    """
+    Choose the most likely action from policy.
+    Args:
+        observation: The current state of the environment.
+    Returns:
+        The action to take.
+    """
     def action(self, observation):
-        return 0
+        probabilities = self.probabilities(observation)
+        return int(np.random.choice(self.action_count, p=probabilities))
 
+    """
+    Get state value from critic.
+    Args:
+        observation: The current state of the environment.
+    Returns:
+        state value of the observation.
+    """
     def V(self, observation):
-        return 0
+        return float(self.features(observation) @ self.value_weights)
 
     def train(self, episodes=500, seed=42):
         return 0
