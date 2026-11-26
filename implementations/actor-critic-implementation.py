@@ -22,6 +22,9 @@ class Agent:
         self.gamma = gamma
         self.action_count = env.action_space.n
 
+        self.policy_weights = np.zeros((3, self.action_count), dtype=float)
+        self.value_weights = np.zeros(3, dtype=float)
+
     """
     Gives bias, current, and power features from an observation.
     Args:
@@ -33,10 +36,7 @@ class Agent:
         float(observation[1]): power feature.
     """
     def features(self, observation):
-            return np.array(
-                [1.0, float(observation[0]), float(observation[1])],
-                dtype=float,
-            )
+            return np.array([1.0, float(observation[0]), float(observation[1])], dtype=float)
     
     """
     Get action probabilities from policy using a linear softmax policy.
@@ -73,7 +73,48 @@ class Agent:
         return float(self.features(observation) @ self.value_weights)
 
     def train(self, episodes=500, seed=42):
-        return 0
+            episode_returns = []
+            for episode_index in range(episodes):
+                observation, _ = self.env.reset(seed=seed + episode_index)
+                episode_return = 0.0
+                terminated = False
+                truncated = False
+    
+                while not (terminated or truncated):
+                    state_features = self.features(observation)
+                    action_probabilities = self.probabilities(observation)
+                    action = int(np.random.choice(
+                        self.action_count,
+                        p=action_probabilities,
+                    ))
+                    next_observation, reward, terminated, truncated, _ = (
+                        self.env.step(action)
+                    )
+    
+                    baseline = self.V(observation)
+                    next_value = (
+                        0.0 if terminated else self.V(next_observation)
+                    )
+                    advantage = reward + self.gamma * next_value - baseline
+
+                    # Update weights using advantage.
+                    self.value_weights += (
+                        self.critic_learning_rate * advantage * state_features
+                    )
+                    action_gradient = -action_probabilities
+                    action_gradient[action] += 1.0 # Give action taken a boost 
+                    self.policy_weights += (
+                        self.actor_learning_rate
+                        * advantage
+                        * np.outer(state_features, action_gradient) 
+                    )
+    
+                    observation = next_observation
+                    episode_return += float(reward)
+    
+                episode_returns.append(episode_return)
+    
+            return episode_returns
 
     def evaluate(self, frames=None, episode=1, seed=None):
         return 0
