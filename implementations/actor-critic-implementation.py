@@ -37,9 +37,19 @@ class Agent:
                 [1.0, float(observation[0]), float(observation[1])],
                 dtype=float,
             )
-
+    
+    """
+    Get action probabilities from policy using a linear softmax policy.
+    Args:
+        observation: The current state of the environment.
+    Returns:
+        A numpy array containing the probabilities of each action.
+    """
     def probabilities(self, observation):
-        return 0
+        logits = self.features(observation) @ self.policy_weights
+        logits -= np.max(logits)
+        probabilities = np.exp(logits)
+        return probabilities / np.sum(probabilities)
     
     """
     Choose the most likely action from policy.
