@@ -285,11 +285,9 @@ class Agent:
                 )
 
         ax_progress.set_xlabel("Step")
-        ax_progress.set_ylabel("Power (W)")
-        reward_axis.set_ylabel("Reward / critic value")
-        policy_axis.set_ylabel("Policy action probability")
+        ax_progress.set_ylabel("Power (W)/ Reward / critic value / policy action")
         policy_axis.set_ylim(0.0, 1.0)
-        ax_progress.set_title("Power and Reward Progress")
+        ax_progress.set_title("Power, Reward, Critic, and Policy Progress")
         ax_progress.grid(True)
 
         power_lines, power_labels = ax_progress.get_legend_handles_labels()
@@ -299,7 +297,7 @@ class Agent:
             ax_progress.legend(
                 power_lines + reward_lines + policy_lines,
                 power_labels + reward_labels + policy_labels,
-                loc="best",
+                loc="upper left",
             )
 
         action_text = "Initial" if data["action"] is None else str(data["action"])
