@@ -116,8 +116,62 @@ class Agent:
     
             return episode_returns
 
+    """
+    Evaluate the policy on a given number of episodes. Also prepares data for visualization
+    Args:
+        frames: A list to store the frames of the evaluation.
+        episode: The episode number.
+        seed: The random seed for reproducibility.
+    Returns:
+        The total return of the evaluation.
+    """
     def evaluate(self, frames=None, episode=1, seed=None):
-        return 0
+        observation, info = self.env.reset(seed=seed)
+        episode_return = 0.0
+        step = 0
+        visual_history = None
+
+        if frames is not None:
+            visual_history = [{
+                "step": 0,
+                "case": info["current_case"],
+                "current": info["current"],
+                "power": info["power"],
+                "reward": 0.0,
+                "action": None,
+            }]
+            frames.append(self.plot(
+                step=step,
+                episode=episode,
+                show=False,
+                history=visual_history,
+            ))
+
+        terminated = False
+        truncated = False
+        while not (terminated or truncated):
+            action = self.action(observation, deterministic=True)
+            observation, reward, terminated, truncated, info = self.env.step(action)
+            episode_return += float(reward)
+            step += 1
+
+            if visual_history is not None:
+                visual_history.append({
+                    "step": step,
+                    "case": info["evaluated_case"],
+                    "current": info["evaluated_current"],
+                    "power": info["evaluated_power"],
+                    "reward": reward,
+                    "action": action,
+                })
+                frames.append(self.plot(
+                    step=step,
+                    episode=episode,
+                    show=False,
+                    history=visual_history,
+                ))
+
+        return episode_return
 
     def plot(self, step=None, episode=None, show=True, history=None):
         return 0
