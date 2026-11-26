@@ -8,6 +8,7 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+from scipy.special import softmax
 
 # Add the parent folder to the system path to allow imports from the implementations folder.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -47,9 +48,7 @@ class Agent:
     """
     def probabilities(self, observation):
         logits = self.features(observation) @ self.policy_weights
-        logits -= np.max(logits)
-        probabilities = np.exp(logits)
-        return probabilities / np.sum(probabilities)
+        return softmax(logits)
     
     """
     Choose the most likely action from policy.
