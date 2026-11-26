@@ -15,6 +15,13 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 np.random.seed(42)
 torch.manual_seed(42)
 
+from pathlib import Path
+import sys
+
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 class agent:
     """
     Agent class that encapsulates the MLP model and Cross-Entropy Method (CEM) optimizer for reinforcement learning.
