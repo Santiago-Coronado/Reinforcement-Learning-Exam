@@ -131,6 +131,7 @@ class Agent:
         visual_history = None
 
         if frames is not None:
+            action_probabilities = self.probabilities(observation)
             visual_history = [{
                 "step": 0,
                 "case": info["current_case"],
@@ -138,6 +139,8 @@ class Agent:
                 "power": info["power"],
                 "reward": 0.0,
                 "action": None,
+                "policy_probabilities": action_probabilities.copy(),
+                "critic_value": self.V(observation),
             }]
             frames.append(self.plot(
                 step=step,
@@ -149,7 +152,12 @@ class Agent:
         terminated = False
         truncated = False
         while not (terminated or truncated):
-            action = self.action(observation)
+            action_probabilities = self.probabilities(observation)
+            action = int(np.random.choice(
+                self.action_count,
+                p=action_probabilities,
+            ))
+            critic_value = self.V(observation)
             observation, reward, terminated, truncated, info = self.env.step(action)
             episode_return += float(reward)
             step += 1
@@ -162,6 +170,8 @@ class Agent:
                     "power": info["evaluated_power"],
                     "reward": reward,
                     "action": action,
+                    "policy_probabilities": action_probabilities.copy(),
+                    "critic_value": critic_value,
                 })
                 frames.append(self.plot(
                     step=step,
@@ -197,8 +207,10 @@ class Agent:
                 "action": None,
             }
 
-        fig, (ax_curve, ax_progress) = plt.subplots(1, 2, figsize=(14, 5))
+        fig, (ax_curve, ax_progress) = plt.subplots(1, 2, figsize=(16, 5))
         reward_axis = ax_progress.twinx()
+        policy_axis = ax_progress.twinx()
+        policy_axis.spines["right"].set_position(("outward", 60))
 
         all_currents = np.concatenate([curve[:, 0] for curve in self.env.cases])
         all_powers = np.concatenate([curve[:, 1] for curve in self.env.cases])
@@ -251,21 +263,42 @@ class Agent:
             steps = [entry["step"] for entry in history]
             powers = [entry["power"] for entry in history]
             rewards = [entry["reward"] for entry in history]
+            critic_values = [entry["critic_value"] for entry in history]
+            policy_probabilities = np.array([
+                entry["policy_probabilities"] for entry in history
+            ])
             ax_progress.plot(steps, powers, label="Power (W)")
             reward_axis.plot(steps, rewards, color="orange", label="Reward")
+            reward_axis.plot(
+                steps,
+                critic_values,
+                color="red",
+                linestyle="--",
+                label="Critic value",
+            )
+            for action, label in enumerate(("Decrease", "Hold", "Increase")):
+                policy_axis.plot(
+                    steps,
+                    policy_probabilities[:, action],
+                    linestyle=":",
+                    label=f"Policy P({label})",
+                )
 
         ax_progress.set_xlabel("Step")
         ax_progress.set_ylabel("Power (W)")
-        reward_axis.set_ylabel("Reward")
+        reward_axis.set_ylabel("Reward / critic value")
+        policy_axis.set_ylabel("Policy action probability")
+        policy_axis.set_ylim(0.0, 1.0)
         ax_progress.set_title("Power and Reward Progress")
         ax_progress.grid(True)
 
         power_lines, power_labels = ax_progress.get_legend_handles_labels()
         reward_lines, reward_labels = reward_axis.get_legend_handles_labels()
-        if power_lines or reward_lines:
+        policy_lines, policy_labels = policy_axis.get_legend_handles_labels()
+        if power_lines or reward_lines or policy_lines:
             ax_progress.legend(
-                power_lines + reward_lines,
-                power_labels + reward_labels,
+                power_lines + reward_lines + policy_lines,
+                power_labels + reward_labels + policy_labels,
                 loc="best",
             )
 
